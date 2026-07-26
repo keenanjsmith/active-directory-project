@@ -239,8 +239,6 @@ are written so someone repeating this does not lose the same time I did.
 
 ## Credits
 
-Bulk user provisioning uses the `AD_PS` PowerShell script by Josh Madakor.
-
 This lab is built on Josh Madakor's Active Directory tutorial:
 https://youtu.be/MHsI8hJmggI
 
