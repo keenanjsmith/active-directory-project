@@ -73,8 +73,10 @@ deleted by cleanup tools.
 
 WHAT ACTUALLY FIXED IT:
 Created D:\ISOs\ and moved both files there with clear names:
-  WindowsServer2022_Eval.iso
-  Windows11_Enterprise_Eval.iso
+```
+WindowsServer2022_Eval.iso
+Windows11_Enterprise_Eval.iso
+```
 ISOs are read-only install media, they can live anywhere. Keeping them out of the
 VirtualBox machine folder avoids mixing them with VM disk files.
 
@@ -165,10 +167,12 @@ spanning multiple /24 networks (roughly 768 addresses) instead of 101. The IP en
 auto-advance between octets as you type, which makes this very easy to do without noticing.
 
 Correct values:
-  Start IP:    172.16.0.100
-  End IP:      172.16.0.200
-  Length:      24
-  Subnet mask: 255.255.255.0
+```
+Start IP:    172.16.0.100
+End IP:      172.16.0.200
+Length:      24
+Subnet mask: 255.255.255.0
+```
 
 Do NOT accept the superscope. A superscope is for serving multiple subnets from one DHCP
 server, which this lab does not need. Accepting it would have silently built the wrong
@@ -204,9 +208,11 @@ Options. Server Options was empty because the wizard never touches it.
 
 Correct place to look: expand the scope, then click Scope Options (below Reservations).
 Expected entries:
-  003 Router            172.16.0.1
-  006 DNS Servers       172.16.0.1
-  015 DNS Domain Name   smithlab.local
+```
+003 Router            172.16.0.1
+006 DNS Servers       172.16.0.1
+015 DNS Domain Name   smithlab.local
+```
 
 DIFFERENCE: Server Options are server-wide defaults inherited by all scopes. Scope Options
 apply to one scope and override the server default. A single-subnet lab only needs it in one
@@ -235,9 +241,11 @@ point for the rest of the build.
 
 WHAT HAPPENED:
 Restoring the snapshot with "Create a snapshot of the current machine state" ticked threw:
-  Cannot delete the current state of the running machine (machine state: Snapshotting).
-  Result Code: VBOX_E_INVALID_VM_STATE (0x80BB0002)
-  Component: SessionMachine
+```
+Cannot delete the current state of the running machine (machine state: Snapshotting).
+Result Code: VBOX_E_INVALID_VM_STATE (0x80BB0002)
+Component: SessionMachine
+```
 
 The VM was fully Powered Off the entire time. The error text claiming "running machine" is
 misleading. Repeated attempts each left behind an additional stray snapshot.
@@ -276,10 +284,12 @@ hardware settings (memory, CPU) the way it did for DC-1 and the way the video sh
 WHAT HAPPENED:
 After clicking Next, VirtualBox jumped to an "Unattended Guest OS Install Setup" page instead,
 pre-filled with:
-  Username: vboxuser
-  Password: changeme
-  Hostname: CLIENT-1
-  Domain Name: myguest.virtualbox.org
+```
+Username: vboxuser
+Password: changeme
+Hostname: CLIENT-1
+Domain Name: myguest.virtualbox.org
+```
 The prior screen had also noted: "This OS type can be installed unattendedly. The install will
 start after this wizard is closed."
 
@@ -454,24 +464,28 @@ Not a problem encountered, but a question that came up mid-build and is worth re
 
 Both operating systems in this lab are free Microsoft evaluation editions with time limits.
 
-  Windows Server 2022 (Standard Eval): 180 days
-  Windows 11 Enterprise (Eval):         90 days
+```
+Windows Server 2022 (Standard Eval): 180 days
+Windows 11 Enterprise (Eval):         90 days
+```
 
 Not a practical constraint. The full build, extension labs, and documentation take days, not
 months.
 
 WHAT HAPPENS AT EXPIRY (neither is destructive):
-  Server 2022  - begins shutting down roughly every hour, displays expiry notices
-  Windows 11   - nags, disables personalization features
-  Data and configuration remain intact in both cases.
+```
+Server 2022  - begins shutting down roughly every hour, displays expiry notices
+Windows 11   - nags, disables personalization features
+Data and configuration remain intact in both cases.
+```
 
 WORKAROUNDS, cheapest first:
-  1. Rearm. From an elevated prompt: slmgr /rearm
-     Server 2022 permits up to 5 rearms (~3 years total). Windows 11 Enterprise permits fewer.
-     This is Microsoft's own supported mechanism.
-  2. Snapshot before expiry and roll back. The eval clock lives inside the guest, so restoring
-     a pre-expiry snapshot restores the remaining days.
-  3. Rebuild from a fresh ISO. Free and unlimited.
+1. **Rearm.** From an elevated prompt: `slmgr /rearm`
+   Server 2022 permits up to 5 rearms (roughly 3 years total). Windows 11 Enterprise permits
+   fewer. This is Microsoft's own supported mechanism.
+2. **Snapshot before expiry and roll back.** The eval clock lives inside the guest, so
+   restoring a pre-expiry snapshot restores the remaining days.
+3. **Rebuild from a fresh ISO.** Free and unlimited.
 
 DOWNGRADING TO SERVER 2019 / WINDOWS 10 IS NOT A FIX. Those evals expire identically, and
 Windows 10 reached end of support in October 2025.
