@@ -262,3 +262,19 @@ source material and stopped rather than proceeding. That correction is in `BUILD
 
 I am disclosing this because I think it is the honest thing to do, and because how someone uses
 these tools is more informative than whether they used them.
+
+## Credits
+
+This lab is built on Josh Madakor's Active Directory tutorial:
+https://youtu.be/MHsI8hJmggI
+
+The architecture, the topology, and the build order are his. So is the `AD_PS`
+PowerShell script used to provision the bulk user accounts.
+
+What I added is a rebuild on current software (Server 2022, Windows 11 Enterprise,
+and VirtualBox 7 in place of Server 2019, Windows 10, and an older VirtualBox),
+documentation of the places where that shift changes the actual steps, and a build
+log of everything that broke along the way.
+
+He put this lab out for people to take somewhere. This is where I am taking it: the
+on-prem identity foundation for a series that ends in privileged access management.
