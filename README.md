@@ -238,79 +238,133 @@ surfaced problems the cloud version hides, and those are documented rather than 
 Name resolution end to end: creating records, watching a client answer from cache instead of from
 the server, and understanding why flushing the cache sometimes fixes nothing at all.
 
-**What was built**
+#### Part 1: The A record
 
-- An A record (`mainframe`) pointing at the domain controller, created in DNS Manager and
-  verified from the client
-- A CNAME alias (`search`) resolving through to an external host, which exercised the DNS
-  server's forwarders
-- A hosts file entry (`zebra`) used to demonstrate resolution order
+A Windows client resolves a name in a fixed order. Local cache first, then the hosts file, then
+the DNS server. The lab starts by proving the name does not exist anywhere.
 
-**What was demonstrated**
+![ping and nslookup for mainframe both fail before any record exists](docs/images/ext-dns-01-ping-fails.png)
 
-The client resolves a name in a fixed order: local cache first, then the hosts file, then the DNS
-server. Changing a record on the server does not change what a client returns until its cached
-answer expires or is flushed. That one behavior is behind a large share of "it works for everyone
-but me" tickets.
+`nslookup` reports `Server: UnKnown` while still finding the server at `172.16.0.1`. It resolved
+the address fine and could not resolve that server's own name, because naming it requires a
+reverse lookup zone this build does not have.
 
-The sharpest moment is what survives a flush. After `ipconfig /flushdns` the DNS answer is gone,
-but the hosts file entry still resolves, because the hosts file is read from disk on every lookup
-and was never part of the cache. The TTL values make it visible: cached DNS answers carry the
-record's real TTL, while hosts file entries show 604800 seconds. A machine with a bad hosts file
-entry will not be fixed by flushing DNS, and knowing that is the difference between a five-minute
-fix and an hour of guessing.
+An A record is created on the domain controller pointing `mainframe` at the internal adapter,
+not the NAT adapter. That distinction matters: the record has to hold an address that means
+something from the client's point of view, and only one of the two interfaces is on a network the
+client can reach.
 
-![DNS cache after flush: the hosts file entry survives while the cached record is gone](docs/images/ext-dns-09-flush-zebra-survives.png)
+![The mainframe A record created in DNS Manager](docs/images/ext-dns-02-a-record-created.png)
 
-The lab closes on a CNAME that resolves correctly in a browser and still fails, because the
-certificate is issued for the target's real name and not the alias. DNS resolution, TLS
-validation, and HSTS are three separate layers, and satisfying the first does not satisfy the
-others.
+![ping mainframe resolving to 172.16.0.1 from the client](docs/images/ext-dns-03-ping-succeeds.png)
 
-**What broke, and what it taught**
+Note the client appending the domain suffix on its own, resolving `mainframe.smithlab.local`.
 
-Four problems came out of this lab that the source material does not contain, because they only
-exist in a local, multihomed, snapshot-driven environment.
+To make the resolution order visible, a hosts file entry is added for a name that has no DNS
+record at all.
 
-**The domain controller was advertising an address no client could reach.** `DC-1` has two
-adapters: NAT for outbound internet, and internal for the lab network. Both were registered in
-DNS, so a lookup for `dc-1` returned two addresses in round-robin order and roughly half of them
-pointed at a network the client has no route to. Nothing was broken yet. It would have surfaced
-later as intermittent timeouts on `\\dc-1` during the file shares lab, which is far harder to
-diagnose than a consistent failure.
+![The hosts file with a zebra entry pointing at loopback](docs/images/ext-dns-04-hosts-file-zebra.png)
 
-Suppressing it needed three separate actions rather than one. Unchecking "Register this
-connection's addresses in DNS" on the adapter governs the DNS *client* service only. The DNS
-*server* service registers zone records for every interface it listens on, independently, and had
-to be restricted to the internal address under DNS Manager > DC-1 Properties > Interfaces. A third
-record was marked static, created at role install time, and had to be deleted by hand, because
-static records never age out and no registration setting touches them.
+![ping zebra resolving to 127.0.0.1 without ever reaching the DNS server](docs/images/ext-dns-05-ping-zebra.png)
 
-**Snapshots silently undid the fix.** Rolling `DC-1` back to an earlier snapshot restored the zone
-along with everything else, reintroducing records that had already been removed. The lesson is
-ordering: take the snapshot after the cleanup, not before.
+#### The multihomed domain controller problem
 
-**The stale cache demonstration failed twice, for two different reasons.** The first time, a break
-between steps let the cached entry expire, so the client queried the server fresh and returned the
-current answer. The lab appeared broken while working perfectly. The second time, restarting the
-client wiped the cache entirely, because it is memory-resident and does not survive a reboot. Both
-failures are now written into the runbook as a constraint: the sequence has to run in one sitting
-with no restart in between.
+Reviewing the zone at this point surfaced something the tutorial version cannot produce. `DC-1`
+has two adapters, NAT for outbound internet and internal for the lab network, and both were
+registered in DNS. A lookup for `dc-1` returned two addresses in round-robin order, and roughly
+half of them pointed at a network the client has no route to.
 
-**A single-sided screenshot could not prove the point.** The lesson of the stale cache step is
-that two machines disagree. A capture from the client alone shows an address but cannot show what
-the server held at that moment, so the claim built on it is unverifiable to a reader. That step
-now requires evidence from both machines.
+Nothing was broken yet. It would have surfaced later as intermittent timeouts on `\\dc-1` during
+the file shares lab, which is far harder to diagnose than a consistent failure.
+
+![The zone after removing the NAT address records](docs/images/ext-dns-06-multihomed-dns-cleanup.png)
+
+Suppressing it needed three separate actions rather than one, and the first attempt did not hold.
+Unchecking "Register this connection's addresses in DNS" on the adapter governs the DNS *client*
+service only. The DNS *server* service registers zone records for every interface it listens on,
+independently of that checkbox, and had to be restricted to the internal address.
+
+![Restricting the DNS server to listen only on the internal address, verified with ipconfig /registerdns](docs/images/ext-dns-14-dns-interfaces-restricted.png)
+
+A third record was marked static, created at role install time, and had to be deleted by hand.
+Static records never age out and no registration setting touches them. Running
+`ipconfig /registerdns` afterward confirmed the fix held.
+
+There was a fourth wrinkle: rolling `DC-1` back to an earlier snapshot restored the zone along
+with everything else, reintroducing records that had already been removed. The lesson is
+ordering. Take the snapshot after the cleanup, not before.
+
+#### Part 2: The stale cache
+
+This is the part that is actually about help desk work. The record is changed on the server while
+the client still holds the previous answer in memory.
+
+![The mainframe record changed to a different address on the server](docs/images/ext-dns-07b-record-changed.png)
+
+![The client answering from cache, then the flush, then the corrected answer](docs/images/ext-dns-07-stale-cache-ping.png)
+
+Server and client disagree. The client never asked, because it found an answer in its own cache
+first. That single frame contains the whole diagnostic sequence: the wrong answer, the flush, and
+the right answer.
+
+![The stale mainframe entry visible in the client's DNS cache](docs/images/ext-dns-08-displaydns-stale-entry.png)
+
+Then the sharpest moment in the lab. After `ipconfig /flushdns`, the cached DNS answer is gone
+and the hosts file entry still resolves.
+
+![After the flush the hosts file entry survives while the cached DNS record is gone](docs/images/ext-dns-09-flush-zebra-survives.png)
+
+The TTL values make it visible. Cached DNS answers carry the record's real TTL, observed at 4268
+seconds. Hosts file entries show 604800 seconds, which is seven days, because they are read from
+disk on every lookup and were never part of the cache at all. The hosts file also generated a
+matching reverse entry.
+
+A machine with a bad hosts file entry will not be fixed by flushing DNS. Knowing that is the
+difference between a five-minute fix and an hour of guessing.
+
+![The client resolving to the current address after the cache is cleared](docs/images/ext-dns-10-flushed-and-resolved.png)
+
+**The help desk translation:** one user cannot reach a resource everyone around them can reach.
+The resource's address changed, DNS was updated correctly, and that one machine is still holding
+the old answer in cache, or has a stale hosts file entry from something someone did months ago.
+A flush fixes the first. Only reading the hosts file fixes the second.
+
+#### Part 3: CNAME aliases
+
+A CNAME maps one name to another name, where an A record maps a name to an address.
+
+![The search CNAME alias created in DNS Manager](docs/images/ext-dns-11-cname-created.png)
+
+![nslookup resolving the alias through to its target, with the alias shown in the response](docs/images/ext-dns-12-cname-nslookup.png)
+
+The response carries `Aliases: search.smithlab.local`, which is the CNAME chain made explicit.
+This step also exercised the DNS server's forwarders, since resolving the target requires external
+resolution. The Azure version never tests this, because Azure supplies resolution to the virtual
+network automatically.
+
+The lab closes on a failure worth understanding rather than working around.
+
+![The browser rejecting the alias on a certificate name mismatch](docs/images/ext-dns-13-cname-browser-cert-error.png)
+
+The name resolved correctly and the connection still failed, because the certificate is issued for
+the target's real name and not the alias. The browser then upgraded to HTTPS on its own and HSTS
+removed the option to proceed anyway. DNS resolution, TLS validation, and HSTS are three separate
+layers, and satisfying the first does not satisfy the others.
+
+#### What this lab produced beyond the tutorial
+
+Four findings, none of which exist in the source material, because they only appear in a local,
+multihomed, snapshot-driven environment:
+
+- A domain controller advertising an address no client could reach, and the three separate
+  settings required to stop it
+- A snapshot rollback silently undoing that fix
+- The stale cache demonstration failing twice, once from TTL expiry across a break and once from a
+  reboot clearing a memory-resident cache, both of which made a working lab look broken
+- A single-sided screenshot that could not prove a claim about two machines disagreeing, which
+  changed how evidence is captured for the rest of the series
 
 Full detail on all four is in [`BUILD-LOG.md`](BUILD-LOG.md).
-
-**Environment notes**
-
-The source material is built on Azure VMs. The translation is close to one-for-one, because once
-you are inside the operating system nothing about DNS is cloud-specific. Two things differ: the
-Azure version never encounters the multihomed problem, since its VMs have a single NIC, and the
-CNAME step here depends on DNS forwarders configured during the role install, where Azure supplies
-resolution to the virtual network automatically.
 
 ---
 

@@ -486,7 +486,11 @@ from a client-side screenshot alone, and the original runbook had no server-side
 | 12 | `ext-dns-12-cname-nslookup.png` | 12 | `nslookup search` resolving through to Google | to do |
 | 13 | `ext-dns-13-cname-browser-cert-error.png` | 13 | Certificate name mismatch in the browser | to do |
 
-All of these go in `D:\ad-lab\docs\images\` alongside the existing 25 from the core build. The
+All of these go in `D:\ad-lab\docs\images\` alongside the existing 25 from the core build.
+
+**These captures are displayed in the [README](../README.md), not here.** This runbook is
+instructions for building the lab. The README is the visual walkthrough of what the lab produced.
+That split matches the main `RUNBOOK.md`, which also carries no images. The
 `ext-` prefix keeps them clear of the `01` through `24` numbering already referenced by filename
 in `RUNBOOK.md` and `README.md`.
 
