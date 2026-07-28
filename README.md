@@ -215,8 +215,111 @@ rolling `DC-1` back alone breaks the computer account password, and the client t
 
 The fix is to snapshot both machines together, or to rejoin the client after a rollback.
 
-**Group Policy is not covered.** A domain without GPOs is a domain that is not actually managing
-anything. That is the next extension of this lab.
+**Group Policy is not covered here.** A domain without GPOs is a domain that is not actually
+managing anything. That is picked up in the extension labs below.
+
+---
+
+## Extension Labs
+
+The core build produced a working domain. These labs run on that same domain and go after the
+things that actually generate help desk tickets.
+
+Each one lives in `extensions/` as its own runbook, written for this environment rather than
+copied from a cloud tutorial. The source material targets Azure. Translating it to VirtualBox
+surfaced problems the cloud version hides, and those are documented rather than smoothed over.
+
+---
+
+### 1. DNS Records and the Local Resolver Cache
+
+**Runbook:** [`extensions/01-dns-records-and-cache.md`](extensions/01-dns-records-and-cache.md)
+
+Name resolution end to end: creating records, watching a client answer from cache instead of from
+the server, and understanding why flushing the cache sometimes fixes nothing at all.
+
+**What was built**
+
+- An A record (`mainframe`) pointing at the domain controller, created in DNS Manager and
+  verified from the client
+- A CNAME alias (`search`) resolving through to an external host, which exercised the DNS
+  server's forwarders
+- A hosts file entry (`zebra`) used to demonstrate resolution order
+
+**What was demonstrated**
+
+The client resolves a name in a fixed order: local cache first, then the hosts file, then the DNS
+server. Changing a record on the server does not change what a client returns until its cached
+answer expires or is flushed. That one behavior is behind a large share of "it works for everyone
+but me" tickets.
+
+The sharpest moment is what survives a flush. After `ipconfig /flushdns` the DNS answer is gone,
+but the hosts file entry still resolves, because the hosts file is read from disk on every lookup
+and was never part of the cache. The TTL values make it visible: cached DNS answers carry the
+record's real TTL, while hosts file entries show 604800 seconds. A machine with a bad hosts file
+entry will not be fixed by flushing DNS, and knowing that is the difference between a five-minute
+fix and an hour of guessing.
+
+![DNS cache after flush: the hosts file entry survives while the cached record is gone](docs/images/ext-dns-09-flush-zebra-survives.png)
+
+The lab closes on a CNAME that resolves correctly in a browser and still fails, because the
+certificate is issued for the target's real name and not the alias. DNS resolution, TLS
+validation, and HSTS are three separate layers, and satisfying the first does not satisfy the
+others.
+
+**What broke, and what it taught**
+
+Four problems came out of this lab that the source material does not contain, because they only
+exist in a local, multihomed, snapshot-driven environment.
+
+**The domain controller was advertising an address no client could reach.** `DC-1` has two
+adapters: NAT for outbound internet, and internal for the lab network. Both were registered in
+DNS, so a lookup for `dc-1` returned two addresses in round-robin order and roughly half of them
+pointed at a network the client has no route to. Nothing was broken yet. It would have surfaced
+later as intermittent timeouts on `\\dc-1` during the file shares lab, which is far harder to
+diagnose than a consistent failure.
+
+Suppressing it needed three separate actions rather than one. Unchecking "Register this
+connection's addresses in DNS" on the adapter governs the DNS *client* service only. The DNS
+*server* service registers zone records for every interface it listens on, independently, and had
+to be restricted to the internal address under DNS Manager > DC-1 Properties > Interfaces. A third
+record was marked static, created at role install time, and had to be deleted by hand, because
+static records never age out and no registration setting touches them.
+
+**Snapshots silently undid the fix.** Rolling `DC-1` back to an earlier snapshot restored the zone
+along with everything else, reintroducing records that had already been removed. The lesson is
+ordering: take the snapshot after the cleanup, not before.
+
+**The stale cache demonstration failed twice, for two different reasons.** The first time, a break
+between steps let the cached entry expire, so the client queried the server fresh and returned the
+current answer. The lab appeared broken while working perfectly. The second time, restarting the
+client wiped the cache entirely, because it is memory-resident and does not survive a reboot. Both
+failures are now written into the runbook as a constraint: the sequence has to run in one sitting
+with no restart in between.
+
+**A single-sided screenshot could not prove the point.** The lesson of the stale cache step is
+that two machines disagree. A capture from the client alone shows an address but cannot show what
+the server held at that moment, so the claim built on it is unverifiable to a reader. That step
+now requires evidence from both machines.
+
+Full detail on all four is in [`BUILD-LOG.md`](BUILD-LOG.md).
+
+**Environment notes**
+
+The source material is built on Azure VMs. The translation is close to one-for-one, because once
+you are inside the operating system nothing about DNS is cloud-specific. Two things differ: the
+Azure version never encounters the multihomed problem, since its VMs have a single NIC, and the
+CNAME step here depends on DNS forwarders configured during the role install, where Azure supplies
+resolution to the virtual network automatically.
+
+---
+
+### Coming next
+
+- **File shares and NTFS permissions.** Share-level and NTFS permissions on the same folders, and
+  what a normal domain user actually sees when the two disagree.
+- **Account lockout, unlock, and password reset.** Group Policy lockout thresholds, reading the
+  resulting events on both machines, and the disable and re-enable cycle.
 
 ---
 
@@ -225,8 +328,10 @@ anything. That is the next extension of this lab.
 ```
 active-directory-project/
 ├── README.md
-├── RUNBOOK.md             Step-by-step build instructions
+├── RUNBOOK.md             Step-by-step build instructions for the core domain
 ├── BUILD-LOG.md           Every problem hit during the build and what fixed it
+├── extensions/
+│   └── 01-dns-records-and-cache.md
 └── docs/
     └── images/            Build and verification screenshots
 ```
