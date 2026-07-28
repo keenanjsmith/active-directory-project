@@ -775,12 +775,20 @@ they were not done.
 
 # Next
 
-Extension labs reusing DC-1 and CLIENT-1, no video required:
+Extension labs reuse `DC-1` and `CLIENT-1` with nothing new to install. Each is roughly one
+session, and each maps onto A+ Core 2 Security and Operating Systems objectives, so they double
+as exam preparation.
 
-- DNS A-records, the local DNS cache, and CNAME records
-- Network file shares, NTFS versus share permissions, and a security group
-- Account lockout policy via Group Policy, enabling and disabling accounts, and log review
-- Windows Firewall rules and a Wireshark capture
+Each lab has its own runbook in [`extensions/`](extensions/), written to the same standard as
+this one: every step verified by hand, every failure documented.
 
-Each is roughly one session and each maps onto A+ Core 2 Security and Operating Systems
-objectives, so they double as exam preparation.
+| Lab | Runbook | Status |
+|---|---|---|
+| DNS records, the local resolver cache, and CNAME aliases | [`extensions/01-dns-records-and-cache.md`](extensions/01-dns-records-and-cache.md) | Complete |
+| Network file shares, NTFS versus share permissions, and a security group | | Planned |
+| Account lockout policy via Group Policy, enabling and disabling accounts, and log review | | Planned |
+| Windows Firewall rules and a Wireshark capture | | Planned |
+
+The DNS lab in particular produced four findings that do not appear in any tutorial version of
+it, because they only exist in a local, multihomed, snapshot-driven environment. Those are written
+up in the [README](README.md) and in [`BUILD-LOG.md`](BUILD-LOG.md).

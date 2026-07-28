@@ -6,18 +6,29 @@ cache is one of the most common causes of "it works for everyone but me."
 This lab extends the domain built in the main runbook. It requires `DC-1` and `CLIENT-1` to
 already exist and be joined. Nothing new is installed.
 
-**Source material:** Josh Madakor's "Building an Intuition for DNS" lab checklist and the
-CourseCareers 4.6.2 video. Both are written for Azure. This runbook is the on-premises
-translation, built and verified on VirtualBox.
+**Source material:** this lab follows the structure of Josh Madakor's "Building an Intuition for
+DNS" exercise, taught in the CourseCareers IT program (module 4.6.2). That version is built on
+Azure virtual machines. What follows is the on-premises translation, rebuilt and verified on
+VirtualBox against a domain controller with two network adapters, which is where it stops being a
+straight port and starts producing problems the cloud version does not have.
 
-Every step carries a video timestamp so you can jump straight to the moment it happens on screen.
-Timestamps are from CourseCareers 4.6.2, runtime 19:00.
+> **On the timestamps below.** Each step carries a reference like `Video: 08:32`, pointing at the
+> matching moment in the CourseCareers module. **That course is paid, and you do not need it to
+> follow this runbook.** Every step here is written to stand on its own: the commands, the
+> expected output, the failure modes, and the reasoning are all in this document. The timestamps
+> are there for people already enrolled who want to see a step demonstrated, and for my own
+> reference when revisiting this later. If you are not enrolled, ignore them and nothing is lost.
+
+**What is mine versus what is his.** The exercise structure and the teaching sequence are his.
+The on-premises translation, the environment mapping, the multihomed domain controller findings,
+the failure analysis, and every capture in this document are mine, and none of them exist in the
+original.
 
 ---
 
 ## Environment translation
 
-| Josh's Azure lab | This build |
+| CourseCareers Azure version | This build |
 | --- | --- |
 | Azure Portal, start VMs | VirtualBox Manager, start `DC-1` then `CLIENT-1` |
 | Remote Desktop to a public IP | VirtualBox console window for each VM |
