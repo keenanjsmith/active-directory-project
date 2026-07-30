@@ -368,12 +368,136 @@ Full detail on all four is in [`BUILD-LOG.md`](BUILD-LOG.md).
 
 ---
 
+### 2. Network File Shares and Permissions
+
+**Runbook:** [`extensions/02-file-shares-and-permissions.md`](extensions/02-file-shares-and-permissions.md)
+
+What a normal user can actually do with a share, why they sometimes see a folder they cannot open,
+and what happens when share permissions and NTFS permissions disagree.
+
+Every test in this lab was run from `CLIENT-1` signed in as a standard domain account with no
+elevated rights, because the entire point is what someone without privilege can and cannot reach.
+
+#### Setting up the shares
+
+Four folders on the domain controller, three of them shared to different groups at different
+permission levels, and one deliberately left unshared.
+
+![Four folders created on the domain controller's C drive](docs/images/ext-shares-01-four-folders-created.png)
+
+![read-access shared to Domain Users with Read permission](docs/images/ext-shares-02-read-access-shared.png)
+
+![write-access shared to Domain Users with Read and Write permission](docs/images/ext-shares-03-write-access-shared.png)
+
+![no-access shared to Domain Admins only](docs/images/ext-shares-04-no-access-shared.png)
+
+#### What a standard user sees
+
+Browsing the domain controller by UNC path from the client returns the three shares plus `NETLOGON`
+and `SYSVOL`, which every domain controller has by default. The unshared `accounting` folder does
+not appear at all. It exists on disk, and from the network it may as well not.
+
+![The share list on the domain controller as seen from the client](docs/images/ext-shares-05-dc1-share-list.png)
+
+Three tests, three different outcomes, all following from one fact: this account is a member of
+Domain Users and not Domain Admins.
+
+![Read access granted but file creation refused](docs/images/ext-shares-06-read-access-denied-write.png)
+
+![Write access granted, a file created and saved successfully](docs/images/ext-shares-07-write-access-file-created.png)
+
+![No access at all, the folder cannot be opened](docs/images/ext-shares-08-no-access-denied.png)
+
+**The help desk translation:** "I can see the folder but I can't open it" and "I can open it but I
+can't save" are two different tickets with two different causes, and users describe both as "I
+don't have access." Knowing which one you are looking at tells you whether the fix is a group
+membership or a permission change.
+
+#### Permissioning by group
+
+Access in a real environment is not granted to a person. It is granted to a group, and people are
+added to the group.
+
+![The ACCOUNTANTS security group created in a dedicated OU](docs/images/ext-shares-09-accountants-group-created.png)
+
+![The accounting folder shared to the ACCOUNTANTS group](docs/images/ext-shares-10-accounting-shared-to-group.png)
+
+Once shared, the folder becomes visible on the network immediately. It still cannot be opened,
+because the user is not in the group yet.
+
+![The accounting folder now visible on the network but refusing access](docs/images/ext-shares-11-accounting-visible-but-denied.png)
+
+That distinction is worth sitting with. Sharing a folder makes it *visible*. Permissioning it makes
+it *openable*. The user can see the door and cannot walk through it.
+
+![The user added to the group's membership list](docs/images/ext-shares-12-user-added-to-group.png)
+
+![Access working after signing out and back in](docs/images/ext-shares-13-accounting-access-works.png)
+
+**Why the sign-out was mandatory.** Windows builds a Kerberos access token at logon that enumerates
+every group the account belongs to at that moment, and it is not re-evaluated for the life of the
+session. Adding someone to a group changes Active Directory instantly and changes nothing about the
+session already running on their machine. This is why "log off and back on" is the correct first
+instruction after any group change, and it is not the brush-off it sounds like.
+
+It also works in reverse, which is the half people miss. **Removing** a membership does not revoke
+access until that user's next sign-in, so an offboarding task is not actually complete while the
+person is still logged in.
+
+#### Groups inside groups
+
+A group can be a member of another group, and membership flows through. Adding `Domain Users` to
+`ACCOUNTANTS` gave all 1000 generated accounts access to the finance share without touching a
+single individual account. Verified by signing in as an account that had never been added to
+anything.
+
+![A different user accessing the share purely through nested group membership](docs/images/ext-shares-14-nested-group-different-user.png)
+
+This is how real access sprawl happens. Someone grants a broad group membership inside a narrow
+group as a convenience, nobody documents it, and two years later a thousand people can read a
+finance share that was meant for eight. Access reviews exist to catch exactly this. It took about
+fifteen seconds to create.
+
+#### Share permissions versus NTFS permissions
+
+Not in the source material, and the thing that actually generates tickets. Every shared folder is
+guarded by two independent permission sets, and a user receives whichever is more restrictive.
+Share permissions apply only over the network. NTFS permissions apply always. Checking one and not
+the other proves nothing.
+
+![NTFS permissions on the Security tab](docs/images/ext-shares-15-share-vs-ntfs-permissions.png)
+
+![Share permissions, a completely separate list, reached through Advanced Sharing](docs/images/ext-shares-15b-share-permissions.png)
+
+The Windows Share wizard writes to both lists at once. It puts the named principal into the NTFS
+ACL and puts **`Everyone` with Full Control** into the share permissions, on the assumption that
+NTFS will do the real gatekeeping. Two failures in this lab came directly out of that behavior.
+
+**A mistyped principal silently granted a standard user Full control.** On `no-access`, the wizard
+received an individual account rather than `Domain Admins`, broke inheritance, and wrote an explicit
+NTFS entry granting that account complete control of the folder. The Sharing tab still looked
+correctly configured. The failure was invisible until access was tested as the user who was supposed
+to be excluded.
+
+**A wide-open share defeated group membership entirely.** On `accounting`, `Everyone` held Full
+Control at the share layer, so removing a user from `ACCOUNTANTS` changed nothing. The NTFS list
+looked correct and was correct. It simply was not the gate that mattered. Diagnosing this meant
+checking the permission set that had not been inspected yet, after the obvious one had already been
+cleared.
+
+The common production configuration is the opposite of what the wizard produces: set the share
+permission broadly and control everything through NTFS, so there is exactly one place to look.
+
+Full detail on both is in [`BUILD-LOG.md`](BUILD-LOG.md).
+
+---
+
 ### Coming next
 
-- **File shares and NTFS permissions.** Share-level and NTFS permissions on the same folders, and
-  what a normal domain user actually sees when the two disagree.
 - **Account lockout, unlock, and password reset.** Group Policy lockout thresholds, reading the
   resulting events on both machines, and the disable and re-enable cycle.
+- **Windows Firewall rules and a Wireshark capture.** The on-premises substitution for the Azure
+  network security group exercise in the source material.
 
 ---
 
@@ -385,7 +509,8 @@ active-directory-project/
 ├── RUNBOOK.md             Step-by-step build instructions for the core domain
 ├── BUILD-LOG.md           Every problem hit during the build and what fixed it
 ├── extensions/
-│   └── 01-dns-records-and-cache.md
+│   ├── 01-dns-records-and-cache.md
+│   └── 02-file-shares-and-permissions.md
 └── docs/
     └── images/            Build and verification screenshots
 ```

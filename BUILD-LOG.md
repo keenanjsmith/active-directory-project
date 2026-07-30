@@ -1,14 +1,14 @@
 # Build Log
 
-Every non-trivial problem hit while building this lab, what was tried, and what actually fixed
-it. Entries are in the order they occurred across build sessions.
+Every non-trivial problem hit while building this lab, what was tried, and what actually fixed it.
+Entries are in the order they occurred across build sessions.
 
-This file exists because tutorials show the path that worked. It does not show the twenty minutes
-lost to a dropdown that appeared empty, or a demonstration that failed because a cache had
-already expired. Those are the parts worth writing down.
+This file exists because tutorials show the path that worked. They do not show the twenty minutes
+lost to a dropdown that appeared empty, or a demonstration that failed because a cache had already
+expired. Those are the parts worth writing down.
 
-The first fourteen entries cover the core domain build. The remainder cover the extension labs,
-which run on the same two virtual machines.
+The first sessions cover the core domain build. Later sessions cover the extension labs, which run
+on the same two virtual machines.
 
 ---
 
@@ -502,6 +502,9 @@ build is a place the doc was insufficient, and it needs to be resolved in the fi
 
 ---
 
+
+---
+
 ## Session 3: 7/27/2026 to 7/28/2026, DNS extension lab
 
 ### [STEP 2a] CLIENT-1 froze mid-lab with two guests and video playback running
@@ -522,6 +525,7 @@ vCPUs on its own.
 **TIME LOST:** 2 min   
 **SCREENSHOT:** N/A
 
+
 ### [STEP 5a] Multihomed DC registered its unreachable NAT adapter in DNS
 **WHAT I WAS DOING:** Reviewing the forward lookup zone in DNS Manager after creating the mainframe  
 A record.  
@@ -541,6 +545,7 @@ This is the correct production configuration for a multihomed domain controller,
 workaround. A DC should only register the interface its clients actually use.  
 **TIME LOST:** 3 min  
 **SCREENSHOT:** N/A
+
 
 ### [STEP 6] Stale-cache demonstration failed because the cached entry had already expired
 **WHAT I WAS DOING:** Changing the mainframe A record from 172.16.0.1 to 8.8.8.8 on DC-1, then  
@@ -563,6 +568,7 @@ that constraint stated will silently fail for anyone who takes a break in the mi
 **TIME LOST:** 5-7 minutes  
 **SCREENSHOT:** N/A
 
+
 ### [STEP 7] Step 7 evidence required a server-side capture that the runbook did not specify
 **WHAT I WAS DOING:** Capturing evidence of the client answering from cache instead of from the  
 authoritative DNS server.  
@@ -581,6 +587,7 @@ machines. A single-sided capture documents an observation but cannot prove the c
 The runbook has been updated to require both captures at this step.  
 **TIME LOST:**  
 **SCREENSHOT:**
+
 
 ### [STEP 8] Restarting CLIENT-1 wiped the DNS cache and emptied the evidence for Step 8
 **WHAT I WAS DOING:** Running ipconfig /displaydns on CLIENT-1 to capture the stale mainframe entry  
@@ -606,6 +613,7 @@ did not account for a restart mid-sequence.
 **TIME LOST:** 7 minutes  
 **SCREENSHOT:** N/A
 
+
 ### [STEP 5a] Disabling adapter DNS registration did not stop a DC from advertising its NAT address
 **WHAT I WAS DOING:** Re-checking the Step 5a multihomed cleanup after noticing that 10.0.2.15  
 records had reappeared in the smithlab.local zone following work on the CNAME steps.  
@@ -628,5 +636,127 @@ actions, not one: uncheck adapter registration (DNS client), restrict listening 
 server), and manually delete any static records. A snapshot must be taken after the cleanup, or a  
 rollback silently reintroduces the problem.  
 **TIME LOST:** 4 minutes  
+**SCREENSHOT:** N/A
+
+
+### [HOST] VirtualBox running under Hyper-V with nested paging disabled, causing repeated guest freezes
+**WHAT I WAS DOING:** Investigating why CLIENT-1 froze twice during the DNS extension lab while DC-1  
+was unaffected.  
+**WHAT HAPPENED:** The VirtualBox status bar showed a green turtle icon. The execution tooltip  
+reported Execution engine: native API, Nested Paging: Inactive, Unrestricted Execution: Inactive,  
+Paravirtualization Interface: Hyper-V. VirtualBox was not running on the CPU directly. It was  
+running through the Windows Hypervisor Platform API as a nested guest, with hardware memory  
+translation unavailable, so every guest memory access went through software-emulated page table  
+walks. Only CLIENT-1 froze because it runs a full desktop with a browser and heavy memory churn,  
+while DC-1 sits in DNS Manager with a stable working set.  
+**WHAT I TRIED:** Disabled Memory Integrity in Windows Security Core isolation and rebooted. No  
+change. Unchecked Virtual Machine Platform, Windows Hypervisor Platform, and Windows Subsystem  
+for Linux in Windows Features and rebooted. No change. Hyper-V itself is not listed on Windows 11  
+Home. Ran bcdedit /set hypervisorlaunchtype off and rebooted. No change.  
+Diagnosed properly with bcdedit /enum {current}, systeminfo, and msinfo32. The boot setting had  
+stored correctly as Off and Memory Integrity was genuinely disabled, but msinfo32 reported  
+Virtualization-based security: Running. VBS launches the hypervisor independently of  
+hypervisorlaunchtype, which is why the boot setting had no effect.  
+**WHAT ACTUALLY FIXED IT:** Three registry values under HKLM\SYSTEM\CurrentControlSet\Control,  
+setting DeviceGuard\EnableVirtualizationBasedSecurity to 0, DeviceGuard\Scenarios\  
+HypervisorEnforcedCodeIntegrity\Enabled to 0, and Lsa\LsaCfgFlags to 0, followed by a reboot.  
+Turtle gone. Execution engine now VT-x/AMD-V with Nested Paging and Unrestricted Execution both  
+Active.  
+**LESSON:** On Windows 11 Home, hypervisorlaunchtype off is not sufficient to release the hardware  
+virtualization extensions. Virtualization-based security is a separate mechanism that overrides  
+it, and msinfo32 is the tool that reveals which layer is actually holding the hypervisor. Fix  
+ladders are worth working top to bottom, but diagnosing before climbing further would have saved  
+two reboots here.  
+**TRADEOFF:** This disables Memory Integrity, LSA protection, and VBS on the host. Acceptable for a  
+machine used primarily for lab work, and worth revisiting if this machine's role changes. Smart  
+App Control was deliberately left enabled, since disabling it is irreversible without reinstalling  
+Windows.  
+**TIME LOST:**  
+**SCREENSHOT:**
+
+
+---
+
+## Session 4: 7/29/2026, file shares and permissions extension lab
+
+### [STEP: Part 2, Test 3] A standard user had Full control over the share that was supposed to exclude him
+
+**WHAT I WAS DOING:** Testing the no-access folder from CLIENT-1 as bhastings, a standard domain
+user with no elevated rights. The folder was supposed to be permissioned to Domain Admins only, so
+the expected result was an access denied error.
+
+**WHAT HAPPENED:** The folder opened, and bhastings was able to create a folder inside it. Not a
+read leak, full write access.
+
+**WHAT I TRIED:** Confirmed via Settings > Accounts that bhastings was a plain domain account and
+not an admin. First theory was inherited NTFS permissions from the root of C:\, since folders
+created there inherit read access for Users and Authenticated Users by default. That theory was
+wrong. Opening Security > Advanced showed inheritance already disabled and every entry marked
+Inherited from: None.
+
+**WHAT ACTUALLY FIXED IT:** The ACL contained an explicit Allow Full control entry for bhastings,
+and contained no entry for Domain Admins at all. The wrong principal had been entered when the
+folder was shared. The Windows File Sharing wizard breaks inheritance and writes explicit NTFS
+entries for whatever principal it is given, so a single mistyped name in that dialog silently
+granted a standard user complete control of the folder while the Sharing tab still looked correctly
+configured. Removed the bhastings entry from the NTFS ACL, added Domain Admins with Full control,
+and retested. Access then failed as intended.
+
+**LESSON:** The Sharing tab is not a reliable summary of who can reach a folder. The simple Share
+button writes to both the share permission set and the NTFS ACL at once, so an error made there
+lands in two places and is only visible in one of them. Checking the Security tab should be part of
+verifying any share, not a troubleshooting step after something goes wrong. This failure mode is
+invisible until someone tests access as the user who is supposed to be excluded, which is the
+entire reason the lab has a client-side test phase.
+
+**TIME LOST:** 2 minutes
+
+**SCREENSHOT:** N/A
+
+### [STEP: Part 3] Removing a user from a security group did not revoke access in the live session
+**WHAT I WAS DOING:** Attempting to capture the pre-membership state for Part 3, where a user can see  
+the accounting share on the network but cannot open it. I had already added bhastings to the  
+ACCOUNTANTS group and captured the working state, so I removed him from the group to reproduce the  
+denied state.  
+**WHAT HAPPENED:** After removing bhastings from ACCOUNTANTS on DC-1, closing the accounting folder on  
+CLIENT-1, and reopening it, he still had full access to the share.  
+**WHAT I TRIED:** Confirmed on DC-1 that the Members tab no longer listed bhastings. Closed and  
+reopened both the folder and Explorer entirely.  
+**WHAT ACTUALLY FIXED IT:** Signing out of CLIENT-1 completely and signing back in as the same user.  
+The Kerberos access token is built at logon and enumerates group membership at that moment, and it  
+is not re-evaluated for the life of the session. Windows also caches the authenticated SMB session  
+to the server, so a new Explorer window reuses the existing connection rather than reauthenticating.  
+Neither closing the folder nor reopening Explorer triggers a new token.  
+**LESSON:** Group membership changes require a re-login to take effect, and this applies to removal  
+exactly as much as it applies to addition. The addition case is widely known. The removal case is  
+the one with real consequences: revoking a group membership does not revoke access until that user  
+signs out, so an offboarding or access-reduction task is not actually complete while the person is  
+still logged in. Disabling the account or forcing a session termination is what makes it immediate.  
+**TIME LOST:** 8 minutes   
+**SCREENSHOT:** N/A
+
+
+### [STEP: Part 3] Removing a user from the permissioned group did not deny access, because the share granted Everyone
+**WHAT I WAS DOING:** Trying to reproduce the denied state for the accounting share so I could capture  
+a user seeing the folder on the network but being unable to open it. bhastings had been removed  
+from the ACCOUNTANTS group.  
+**WHAT HAPPENED:** bhastings retained full access to \dc-1\accounting after being removed from the  
+group, after a full sign-out, and after a host restart.  
+**WHAT I TRIED:** Confirmed the ACCOUNTANTS Members tab was empty on DC-1. Confirmed the folder's NTFS  
+ACL granted ACCOUNTANTS and did not name bhastings. Ran net use * /delete /y, which reported no  
+entries, because it had been run from an elevated session under a different account and only  
+affects the session that runs it. Checked the Sharing tab, which is the permission set I had not  
+inspected.  
+**WHAT ACTUALLY FIXED IT:** The share permissions granted Everyone Full Control. The Windows Share  
+Wizard writes Everyone into the share ACL by design and relies on NTFS for actual access control,  
+so group membership was never the gate. Removed Everyone from the share permissions and added  
+ACCOUNTANTS with Change and Read. Access then denied correctly after a re-login.  
+**LESSON:** Two independent permission sets guard every share, and checking one of them proves nothing.  
+The NTFS ACL looked correct in isolation and was correct, which made it easy to stop looking.  
+Verifying a share means opening both the Security tab and Advanced Sharing > Permissions, every  
+time. Also worth noting that read-access and write-access behaved correctly in Part 2 while  
+carrying the same wide-open share ACL, meaning those tests produced the right answers for the wrong  
+reason.  
+**TIME LOST:** 12 minutes  
 **SCREENSHOT:** N/A
 

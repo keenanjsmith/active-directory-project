@@ -785,10 +785,12 @@ this one: every step verified by hand, every failure documented.
 | Lab | Runbook | Status |
 |---|---|---|
 | DNS records, the local resolver cache, and CNAME aliases | [`extensions/01-dns-records-and-cache.md`](extensions/01-dns-records-and-cache.md) | Complete |
-| Network file shares, NTFS versus share permissions, and a security group | | Planned |
+| Network file shares, NTFS versus share permissions, and a security group | [`extensions/02-file-shares-and-permissions.md`](extensions/02-file-shares-and-permissions.md) | Complete |
 | Account lockout policy via Group Policy, enabling and disabling accounts, and log review | | Planned |
 | Windows Firewall rules and a Wireshark capture | | Planned |
 
-The DNS lab in particular produced four findings that do not appear in any tutorial version of
-it, because they only exist in a local, multihomed, snapshot-driven environment. Those are written
-up in the [README](README.md) and in [`BUILD-LOG.md`](BUILD-LOG.md).
+Both completed labs produced findings that do not appear in any tutorial version of them, because
+they only exist in a local, multihomed, snapshot-driven environment. The DNS lab surfaced a domain
+controller advertising an address no client could reach. The file shares lab surfaced two separate
+failures caused by the Windows Share wizard writing to both the share and NTFS permission sets at
+once. All of them are written up in the [README](README.md) and in [`BUILD-LOG.md`](BUILD-LOG.md).
