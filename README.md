@@ -492,10 +492,204 @@ Full detail on both is in [`BUILD-LOG.md`](BUILD-LOG.md).
 
 ---
 
+### 3. Account Lockout, Unlocking, and Password Resets
+
+**Runbook:** [`extensions/03-account-lockout-and-passwords.md`](extensions/03-account-lockout-and-passwords.md)
+
+Account lockouts are the single most common ticket a help desk sees. This lab configures the policy
+that produces them, triggers one deliberately, works through the full administrative response, and
+then finds every step of it again in the security logs.
+
+The theme running through all of it: **the domain controller decides, the workstation finds out.**
+
+#### Part 1: There is no lockout policy until you make one
+
+The source video opens by failing eleven logons in a row and getting signed in anyway. That is not
+a mistake in the demonstration. It is the default state of a Windows domain.
+
+![net accounts /domain showing lockout threshold set to Never](docs/images/ext-lockout-01-net-accounts-before.png)
+
+`Lockout threshold: Never`. Out of the box, a domain account can be guessed at indefinitely. Every
+protection in this lab is opt-in, and a domain nobody has configured has none of it.
+
+The policy goes in a new GPO linked at the **root of the domain**, not on an OU.
+
+![The Account Lockout Policy GPO linked at the smithlab.local node at link order 1](docs/images/ext-lockout-02-gpmc-gpo-linked-domain-root.png)
+
+That placement is not a preference. Account Policies behave differently from every other Group
+Policy setting: for domain user accounts they are only honored from a GPO linked at the domain root,
+because the domain controllers read and enforce them at authentication time. Link the same GPO to an
+OU and it does not error, it does not warn, and it does not work. It quietly applies to the local SAM
+database of the computers in that OU instead, so local accounts get a lockout threshold and domain
+accounts get nothing.
+
+![Account lockout duration, threshold, and reset counter all reading Not Defined](docs/images/ext-lockout-03-lockout-policy-undefined.png)
+
+Setting the threshold first triggers a dialog worth pausing on. Windows recognizes that a threshold
+with no duration and no observation window is an incomplete policy and proposes the other two.
+
+![The Suggested Value Changes dialog proposing 30 minutes for duration and reset counter](docs/images/ext-lockout-04-suggested-value-changes.png)
+
+![All three settings defined: 30 minute duration, 5 attempt threshold, 30 minute observation window](docs/images/ext-lockout-05-lockout-policy-configured.png)
+
+Three settings that get confused constantly. **Threshold** is how many failures it takes.
+**Duration** is how long the lock lasts before clearing itself. **Reset counter after** is the
+observation window, meaning how long a single failure is remembered.
+
+![The same net accounts command now reporting threshold 5, duration 30, observation window 30](docs/images/ext-lockout-06-net-accounts-after.png)
+
+`gpupdate /force` runs on the **domain controller**, not the client. The client never evaluates
+whether an account has crossed the threshold. It packages the credential, hands it to `DC-1`, and
+`DC-1` decides. The policy has to reach the domain controller. It does not have to reach the client.
+
+#### Part 2: The domain controller audits the response, not the incident
+
+This part has no equivalent in the source material, and it is the reason the source material's log
+review comes up empty.
+
+![auditpol output with Kerberos Authentication Service, Logon, and Account Lockout all set to Success and Failure](docs/images/ext-lockout-07-auditpol-dc1.png)
+
+A Server 2022 domain controller ships with `User Account Management` auditing **Success**, so it
+faithfully records an administrator unlocking an account. It ships with `Kerberos Authentication
+Service` failure auditing **off**, so it records nothing about the bad passwords that locked it.
+
+The administrative response is logged. The attack that caused it is not.
+
+`Account Lockout` set to Success only is the same problem in miniature, since every event that
+subcategory produces is a failure by definition.
+
+**Auditing is not retroactive.** Events that were not being audited when they occurred cannot be
+recovered afterward. Verifying the audit configuration before generating evidence is the only
+ordering that works, and getting it backwards costs the entire lab.
+
+#### Part 3: Triggering the lockout
+
+Two messages, same account, same machine, seconds apart.
+
+![The password is incorrect. Try again.](docs/images/ext-lockout-08-client1-bad-password-error.png)
+
+![The referenced account is currently locked out and may not be logged on to.](docs/images/ext-lockout-09-client1-locked-out-error.png)
+
+With the threshold at 5, the account locks **on** the fifth failure, but the fifth attempt still
+returns the ordinary bad-password message, because the lock is applied as a result of that attempt
+rather than before it. The locked-out message appears on the sixth. Stopping at five and concluding
+the policy is broken is an easy mistake to make.
+
+Two behaviors worth knowing before testing this. Since Server 2003, domain controllers do **not**
+increment the bad password counter when the submitted password matches one of the account's two most
+recent previous passwords, so a "wrong" password that the account previously held is a free attempt
+and the counter never moves. And any background process still holding a stale credential contributes
+to the same counter, which can fire the lockout earlier than expected.
+
+#### Part 4: The unlock
+
+![The unlock checkbox on the Account tab, reading This account is currently locked out on this Active Directory Domain Controller](docs/images/ext-lockout-10-dc1-aduc-unlock-checkbox.png)
+
+That extended wording only renders while the account is actually locked. Once unlocked, the label
+shortens to `Unlock account` and the checkbox proves nothing, which makes this a capture with a
+window that closes.
+
+The wording is worth reading closely for a second reason. It says **this** domain controller. The
+bad password counter is maintained per DC and does not replicate, which is invisible in a single-DC
+lab and is exactly why real lockout investigations start at the PDC Emulator.
+
+Finding the account matters as much as fixing it. With roughly a thousand users in `_USERS`,
+right-click the domain node and use **Find** rather than browsing.
+
+#### Part 5: Password reset
+
+![Reset Password dialog](docs/images/ext-lockout-11-dc1-reset-password-dialog.png)
+
+![The user's password must be changed before signing in](docs/images/ext-lockout-12-client1-forced-password-change.png)
+
+The rejection message on a failed reset, *"the password does not meet the length, complexity or
+history requirements of the domain"*, covers three separate policies and does not say which one
+fired. In this domain it is almost always history: the last 24 passwords are remembered, so resetting
+a provisioned account back to its original password is refused.
+
+There is a subtler one underneath it. Minimum password age is one day, and an administrator reset in
+ADUC bypasses it while a user-initiated change does not. So the forced change at logon works, and a
+second change the same day fails with the same misleading message about complexity.
+
+#### Part 6: Disabled is not locked
+
+![The disabled account in ADUC](docs/images/ext-lockout-13-dc1-aduc-account-disabled.png)
+
+![Your account has been disabled. Please see your system administrator.](docs/images/ext-lockout-14-client1-account-disabled-error.png)
+
+Same user, same machine, correct password, and a completely different message from the lockout in
+Part 3. Locked is a transient state produced by failed authentication that clears itself after the
+duration expires. Disabled is a deliberate administrative action that clears only when an
+administrator reverses it. They produce different messages, different event IDs, and different
+failure codes.
+
+#### Part 7: Finding all of it in the logs
+
+The source video searches the Security log by username, surfaces a run of logon and logoff events,
+says on camera *"I don't actually know where they're going to show up"*, and never finds the lockout
+at all. Filtering by event ID instead of searching by text returns it immediately.
+
+![Event 4740, a user account was locked out, with Caller Computer Name CLIENT-1](docs/images/ext-lockout-15-dc1-event-4740.png)
+
+Event **4740** exists on `DC-1` and only on `DC-1`. **Number of events: 1**, so the policy fired
+exactly once. The Subject is `SYSTEM` / `DC-1$` rather than an administrator, because the domain
+controller locked the account on its own. And **Caller Computer Name** names the machine the bad
+passwords came from, which on a real network is the entire investigation: it separates a user
+fat-fingering their password at their desk from credentials being sprayed from somewhere that should
+not have them.
+
+![Event 4771, Kerberos pre-authentication failed, failure code 0x18](docs/images/ext-lockout-16-dc1-event-4771.png)
+
+This is why the video came up empty. Most people go looking for 4625, "an account failed to log on."
+On a domain controller authenticating a domain-joined Windows client, the failure surfaces as
+**4771**, because the client uses Kerberos and the failure happens at pre-authentication. Failure
+code `0x18` means the pre-authentication data was bad, which for a password logon means the password
+was wrong. The events were there the whole time under an event ID nobody was looking for.
+
+![Filtered list of 4724, 4725, 4722, 4767, and 4738 events](docs/images/ext-lockout-17-dc1-account-management-events.png)
+
+Read top to bottom, this is the complete administrative narrative of the lab in reverse: unlock,
+reset, disable, enable, each accompanied by a 4738 recording that the account object changed.
+
+Every one of these records **Subject: Account Name** as `Keenan_Admin` rather than `Administrator`.
+That is the audit trail the core build's separate named admin account was created for, and this is
+where that argument stops being theoretical. Note the contrast with 4740 above, where the subject
+was `SYSTEM`: the domain controller locked the account, a named human unlocked it.
+
+![Event 4625 on CLIENT-1 with Sub Status 0xC000006A and Logon Type 2](docs/images/ext-lockout-18-client1-event-4625.png)
+
+On the client side, **do not go looking for a 4625 marked locked out or disabled. There is not one.**
+In a Kerberos domain the client requests a ticket from the domain controller before attempting any
+local logon session. A locked or disabled account is refused at that point, so the workstation never
+reaches a stage where it would log an interesting failure. Every 4625 on the client is an ordinary
+bad password or an unknown username.
+
+The sub-status is what carries the meaning. `0xC000006A` means the username was valid and the
+password was wrong. `0xC0000064` means the username itself does not exist. On a real network that
+difference separates password guessing against a known account from guessing at account names.
+
+**Logon Type 2** is worth noting against the source material, which shows Type 10 and reads a source
+IP address out of these events. That version connects to the client over RDP. This one is a local
+console logon, so the source address is loopback. Knowing which logon type corresponds to which
+access method is the transferable part: 2 is interactive at the console, 3 is network, 10 is
+RemoteInteractive over RDP.
+
+#### Lab-only shortcuts in this lab
+
+| Shortcut | Why it is fine here | Why it is wrong in production |
+|---|---|---|
+| One domain-wide lockout policy | Single test account, one client | Real environments need Fine-Grained Password Policies so service and privileged accounts get different thresholds than staff |
+| Threshold of 5 with a 30 minute duration | Fast to trigger, self-clearing for a demo | Aggressive lockout is itself a denial of service vector an attacker can weaponize |
+| No monitoring or alerting on 4740 | Manual log review is the exercise | A lockout event nobody sees is not a control. Production forwards these to a SIEM with alerting on volume and on caller computer name anomalies |
+| Audit subcategory set with `auditpol` | Nothing in this domain defines it in GPO | Audit policy belongs in a GPO under Advanced Audit Policy Configuration, or the next policy refresh silently reverts it |
+| Password reset typed into ADUC by hand | One account | Self-service reset, or a ticketed process with identity verification. Help desk resets over an unverified phone call are a well-worn social engineering path |
+| Provisioned accounts carry `Password never expires` | Filler accounts from the bulk script | A credential that never expires and never rotates turns one leaked password into permanent access |
+| Single domain controller | Nothing to replicate with | The bad password counter is per-DC and does not replicate, which is why real investigations start at the PDC Emulator |
+
+---
+
 ### Coming next
 
-- **Account lockout, unlock, and password reset.** Group Policy lockout thresholds, reading the
-  resulting events on both machines, and the disable and re-enable cycle.
 - **Windows Firewall rules and a Wireshark capture.** The on-premises substitution for the Azure
   network security group exercise in the source material.
 
@@ -510,7 +704,8 @@ active-directory-project/
 ├── BUILD-LOG.md           Every problem hit during the build and what fixed it
 ├── extensions/
 │   ├── 01-dns-records-and-cache.md
-│   └── 02-file-shares-and-permissions.md
+│   ├── 02-file-shares-and-permissions.md
+│   └── 03-account-lockout-and-passwords.md
 └── docs/
     └── images/            Build and verification screenshots
 ```
