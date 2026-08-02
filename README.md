@@ -688,10 +688,180 @@ RemoteInteractive over RDP.
 
 ---
 
+### 4. Network Traffic Analysis and Windows Firewall
+
+**Runbook:** [`extensions/04-network-traffic-and-firewall.md`](extensions/04-network-traffic-and-firewall.md)
+
+Five protocols watched live on the wire, and a firewall rule that stops one of them cold. What each
+protocol exposes to anyone listening, and what the difference is between traffic that is blocked and
+traffic that was never sent.
+
+The source exercise runs on Azure and uses a Network Security Group as its firewall. There is no
+on-premises equivalent, so this uses Windows Defender Firewall instead, and that substitution turned
+out to produce better evidence than the original.
+
+#### Setup
+
+Two Windows features and a logging change, no new machines. The source builds a throwaway Ubuntu VM
+to have something to ping and SSH into. `DC-1` already answers pings, and Windows Server 2022 ships
+an OpenSSH Server feature.
+
+![OpenSSH Server installed and running on DC-1 with its inbound firewall rule](docs/images/ext-net-01-openssh-server-installed.png)
+
+![Windows Defender Firewall logging enabled for dropped packets](docs/images/ext-net-02-firewall-logging-enabled.png)
+
+That second one has no equivalent in the source material and it is what makes the firewall section
+work. Windows Defender Firewall can write every dropped packet to a log file, and it is off by
+default.
+
+#### ICMP, and what a working request looks like
+
+![Four ICMP echo request and reply pairs between CLIENT-1 and DC-1](docs/images/ext-net-03-icmp-request-reply.png)
+
+Four requests out, four replies back. The detail worth holding onto is in the Info column:
+Wireshark annotates each request with `(reply in 184)` and each reply with `(request in 183)`,
+because it matches them by identifier and sequence number. When that pairing works, it says so.
+
+![ICMP to a public address, routed through the NAT gateway](docs/images/ext-net-04-icmp-internet.png)
+
+Pinging a public host produces packets addressed to the internet from a client that has no route to
+the internet of its own. They go to `DC-1`, which is the default gateway, and RRAS translates them on
+the way out. The capture shows the client's version of the story, not the whole path.
+
+#### The block, and the thing the cloud version cannot show
+
+![The Block rule for ICMPv4 Echo Request in DC-1's inbound rules](docs/images/ext-net-05-firewall-block-rule.png)
+
+A **Block** rule rather than disabling the existing Allow rule, deliberately. Both rules now exist
+and both match the same traffic, and the block wins, because Windows Firewall evaluates block rules
+first. That precedence is the answer to "there is an allow rule for this, why is it still being
+denied," which is a real troubleshooting question.
+
+![Ping showing replies then Request timed out, with Wireshark showing requests and no replies](docs/images/ext-net-06-ping-timeout.png)
+
+Same view as before, one column different. Every request now reads `(no response found!)` where it
+previously read `(reply in 184)`.
+
+**And this is the limit of a one-sided capture.** The requests are still leaving `CLIENT-1`. Nothing
+on the client changed. From here, "blocked by a firewall," "the host is powered off," and "the cable
+is unplugged" produce an identical capture: outbound requests, silence. The sender cannot tell you
+which one is happening.
+
+![DC-1's pfirewall.log showing DROP entries for ICMP from 172.16.0.100](docs/images/ext-net-07-dc1-firewall-drop-log.png)
+
+`DC-1` can. The drop log names the protocol, the source, and the decision.
+
+This is where the substitution beats the original. An Azure Network Security Group filters at the
+virtual network layer, **before** traffic reaches the VM's interface, so the VM never sees the packet
+and has nothing to log. A host-based firewall decides **after** the packet has arrived, which means
+the destination can state that it received the request and discarded it on purpose.
+
+Put the two together and the question is answered. The client proves it sent something and heard
+nothing. The server proves it received that something and refused it. Neither capture alone is
+sufficient, which is the same two-sided evidence standard the DNS lab established in Extension Lab 1.
+
+![Ping resuming after the block rule is removed](docs/images/ext-net-08-ping-resumes.png)
+
+#### SSH: the content is opaque, the metadata is not
+
+![SSH session into DC-1 with the encrypted packets that carried it](docs/images/ext-net-09-ssh-session.png)
+
+`whoami` returns `smithlab\keenan_admin` and `hostname` returns `DC-1`. That is a shell on the domain
+controller, authenticated as a domain account. Every packet that carried it reads `Encrypted packet`.
+Not the commands, not the output.
+
+Two things leak anyway.
+
+The **opening exchange is in the clear.** Scroll to the top of the capture and the version banner
+names the SSH implementation and version on both sides. Encryption starts after the key exchange,
+not before it, which is how a scanner fingerprints a server before it tries anything.
+
+The **timing is in the clear.** Read the timestamps: client packet, server packet, microseconds
+apart, over and over, one pair per keystroke, because SSH echoes each character back from the remote
+side as you type. An observer learns which hosts are talking, for how long, in which direction, and
+roughly how much was typed and where the pauses fell. Traffic analysis is built on exactly this, and
+it never decrypts a byte.
+
+#### DHCP: the full DORA
+
+![DHCP Release, Discover, Offer, Request, and ACK captured in sequence](docs/images/ext-net-10-dhcp-dora.png)
+
+The source runs `ipconfig /renew` alone, which produces a two-packet exchange, because a renewal is
+a unicast conversation with a server the client already knows. Releasing first forces the whole
+thing: **D**iscover, **O**ffer, **R**equest, **A**cknowledge.
+
+Expand the ACK and the scope options are sitting there on the wire: Router, Domain Name Server, and
+Domain Name. Those are the exact values configured on the DHCP scope during the core build, arriving
+at the client.
+
+#### DNS: every name you look up, in plain text
+
+![DNS queries and responses with disney.com and its address readable](docs/images/ext-net-11-dns-cleartext.png)
+
+Put this next to the SSH capture. That session was encrypted so thoroughly the commands were
+unrecoverable. The DNS lookup that found the server in the first place went out in the clear. Anyone
+on the path sees every name a client resolves, no matter how well the connections that follow are
+protected. Content and destination are two separate exposures, and encrypting one does nothing for
+the other. That gap is the reason DNS over HTTPS and DNS over TLS exist.
+
+Two smaller things visible in the same capture.
+
+The queries for `google.com.smithlab.local` returning `No such name` are not an error. Windows
+appends the machine's DNS suffix and tries the qualified name first, fails, then falls back to the
+bare name. Four wasted round trips per lookup, and a real contributor to "DNS feels slow" on domain
+networks.
+
+`nslookup` reporting `Server: UnKnown` is Extension Lab 1's finding surfacing from another angle.
+nslookup tries a reverse lookup on `172.16.0.1` to name the server, and the `PTR` query for
+`1.0.16.172.in-addr.arpa` is visible in the capture, failing. There is no reverse lookup zone in this
+domain. That is listed in the lab-only shortcuts above, and this is what the consequence looks like.
+
+#### RDP: a protocol that never stops talking
+
+![Remote Desktop session into DC-1 from CLIENT-1](docs/images/ext-net-12-rdp-session.png)
+
+The Server 2022 watermark inside a `CLIENT-1` window is the proof of what is connected to what.
+
+![Port 3389 traffic continuing with the RDP session idle](docs/images/ext-net-13-rdp-continuous.png)
+
+Read that capture from the top and it is a complete connection lifecycle: the old session being torn
+down with `[RST, ACK]`, a fresh TCP handshake, two packets Wireshark dissects as **RDP**, a TLS 1.2
+handshake, and then `Application Data` forever.
+
+**Only those two packets are dissected as RDP.** Everything after the TLS handshake is opaque
+application data and the RDP dissector never engages, which is why the filter has to be
+`tcp.port == 3389` rather than `rdp`. Filtering on the protocol name returns two packets and looks
+like a failure.
+
+One of those two carries `Cookie: mstshash=keenan_ad`. **That is the username, truncated, sent
+before the TLS handshake begins.** Same pattern as the SSH version banner: the negotiation that sets
+up the encryption necessarily happens before the encryption exists, and it gives away who is
+connecting.
+
+Then the point of the section: that traffic does not stop. Every other protocol here produced packets
+in response to an action. RDP is a live video stream of one machine's screen, so a blinking cursor
+is a screen change and a clock updating is a screen change. An idle session consumes bandwidth for as
+long as it stays open, which is why an abandoned RDP connection stays visible in traffic monitoring
+long after the person walked away.
+
+#### Lab-only shortcuts in this lab
+
+| Shortcut | Why it is fine here | Why it is wrong in production |
+|---|---|---|
+| OpenSSH Server installed on a domain controller | Cheapest way to generate real SSH traffic without a Linux VM | A DC should run the minimum services required to be a DC. Every additional listener is attack surface on the most privileged host in the environment |
+| Remote Desktop enabled on a domain controller | Needed to generate RDP traffic to capture | DC administration belongs on a privileged access workstation behind a jump host, not direct RDP from a general-purpose client |
+| Domain admin credentials used for SSH and RDP | One admin account exists in this lab | Interactive admin logons to a DC expose those credentials to anything already resident on the connecting workstation |
+| Firewall rule applied to all three profiles | Simpler than determining the active profile mid-lab | Rules should be scoped to the profile and source addresses they are meant for |
+| Wireshark installed on a domain-joined client | Isolated lab | Capture tooling on general-purpose endpoints is itself a risk, and capture files routinely contain credentials and session tokens |
+| Firewall drops logged to a local text file | Answers the question during the exercise | `pfirewall.log` rotates at 4 MB and is deleted by anyone with local admin. It is a troubleshooting aid, not an audit trail. Forward it |
+| RDP certificate warning clicked through | No PKI here, nothing is real | Clicking through certificate warnings is the exact habit that makes machine-in-the-middle attacks work |
+
+---
+
 ### Coming next
 
-- **Windows Firewall rules and a Wireshark capture.** The on-premises substitution for the Azure
-  network security group exercise in the source material.
+- **osTicket.** A ticketing system build in its own repository, moving from infrastructure into the
+  service desk workflows that sit on top of it.
 
 ---
 
@@ -705,7 +875,8 @@ active-directory-project/
 ├── extensions/
 │   ├── 01-dns-records-and-cache.md
 │   ├── 02-file-shares-and-permissions.md
-│   └── 03-account-lockout-and-passwords.md
+│   ├── 03-account-lockout-and-passwords.md
+│   └── 04-network-traffic-and-firewall.md
 └── docs/
     └── images/            Build and verification screenshots
 ```
