@@ -786,11 +786,18 @@ this one: every step verified by hand, every failure documented.
 |---|---|---|
 | DNS records, the local resolver cache, and CNAME aliases | [`extensions/01-dns-records-and-cache.md`](extensions/01-dns-records-and-cache.md) | Complete |
 | Network file shares, NTFS versus share permissions, and a security group | [`extensions/02-file-shares-and-permissions.md`](extensions/02-file-shares-and-permissions.md) | Complete |
-| Account lockout policy via Group Policy, enabling and disabling accounts, and log review | | Planned |
-| Windows Firewall rules and a Wireshark capture | | Planned |
+| Account lockout policy via Group Policy, enabling and disabling accounts, and log review | [`extensions/03-account-lockout-and-passwords.md`](extensions/03-account-lockout-and-passwords.md) | Complete |
+| Network traffic analysis in Wireshark and Windows Firewall rules | [`extensions/04-network-traffic-and-firewall.md`](extensions/04-network-traffic-and-firewall.md) | Complete |
 
-Both completed labs produced findings that do not appear in any tutorial version of them, because
-they only exist in a local, multihomed, snapshot-driven environment. The DNS lab surfaced a domain
-controller advertising an address no client could reach. The file shares lab surfaced two separate
-failures caused by the Windows Share wizard writing to both the share and NTFS permission sets at
-once. All of them are written up in the [README](README.md) and in [`BUILD-LOG.md`](BUILD-LOG.md).
+All four labs produced findings that do not appear in any tutorial version of them, because they
+only exist in a local, multihomed, snapshot-driven environment.
+
+The DNS lab surfaced a domain controller advertising an address no client could reach. The file
+shares lab surfaced two separate failures caused by the Windows Share wizard writing to both the
+share and NTFS permission sets at once. The account lockout lab surfaced a domain controller that
+audits an administrator unlocking an account but not the failed passwords that locked it, because
+Kerberos failure auditing is off by default. The network lab replaced an Azure Network Security
+Group with a host-based firewall and got better evidence for it, since a host firewall drops a
+packet after it arrives and can therefore prove it received the packet and discarded it deliberately.
+
+All of them are written up in the [README](README.md) and in [`BUILD-LOG.md`](BUILD-LOG.md).
