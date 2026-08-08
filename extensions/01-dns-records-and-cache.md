@@ -367,10 +367,23 @@ ipconfig /displaydns
 
 The cache is now essentially empty. **But `zebra` is still there.**
 
-That is not a bug and it is the most important observation in the lab. `zebra` comes from the
-hosts file, which is read from disk on every lookup and is not part of the cache. Flushing DNS
-will not fix a machine with a bad hosts file entry, and that is a real troubleshooting scenario
-that costs people hours.
+That is not a bug and it is the most important observation in the lab.
+
+**Be careful about why, because the obvious explanation is wrong.** `zebra` is not surviving the
+flush by sitting outside the cache. The DNS Client service **preloads hosts file entries into the
+resolver cache**, which Microsoft's own documentation for `ipconfig /displaydns` states directly:
+the cache holds entries preloaded from the local Hosts file alongside records obtained from
+queries. The flush really does empty the cache. The service then reloads the hosts file back into
+it immediately, so `zebra` is visible again a moment later because it was **put back**, not because
+it was never there.
+
+The TTL is the tell. `zebra` shows 604800 seconds, seven days, which is the fixed value Windows
+assigns to preloaded hosts entries rather than a TTL any name owner published. A real cached answer
+carries the record's actual remaining TTL, which is why `mainframe` showed something like 4268.
+
+The practical conclusion is the same and the correct mechanism explains it better: flushing DNS
+will not fix a machine with a bad hosts file entry, because every flush reloads that bad entry
+straight back off disk. That is a real troubleshooting scenario that costs people hours.
 
 **CAPTURE: `ext-dns-09-flush-zebra-survives.png`** showing the post-flush `displaydns` output
 with `zebra` present and `mainframe` gone. This is the single best image in the lab and it was

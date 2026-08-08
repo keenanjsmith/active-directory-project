@@ -240,8 +240,10 @@ the server, and understanding why flushing the cache sometimes fixes nothing at 
 
 #### Part 1: The A record
 
-A Windows client resolves a name in a fixed order. Local cache first, then the hosts file, then
-the DNS server. The lab starts by proving the name does not exist anywhere.
+A Windows client checks its local resolver cache first, then queries the DNS server. The hosts
+file is not a separate step at lookup time: the DNS Client service preloads hosts entries into
+that same cache, so a hosts entry is answered from cache along with everything else. The lab
+starts by proving the name does not exist anywhere.
 
 ![ping and nslookup for mainframe both fail before any record exists](docs/images/ext-dns-01-ping-fails.png)
 
@@ -315,12 +317,22 @@ and the hosts file entry still resolves.
 ![After the flush the hosts file entry survives while the cached DNS record is gone](docs/images/ext-dns-09-flush-zebra-survives.png)
 
 The TTL values make it visible. Cached DNS answers carry the record's real TTL, observed at 4268
-seconds. Hosts file entries show 604800 seconds, which is seven days, because they are read from
-disk on every lookup and were never part of the cache at all. The hosts file also generated a
-matching reverse entry.
+seconds. The hosts file entry shows 604800 seconds, seven days, which is the fixed TTL Windows
+assigns to preloaded hosts entries rather than anything the name's owner published. The hosts file
+also generated a matching reverse entry.
 
-A machine with a bad hosts file entry will not be fixed by flushing DNS. Knowing that is the
-difference between a five-minute fix and an hour of guessing.
+**Why the hosts entry survives the flush, corrected.** An earlier version of this write-up said
+hosts entries are read from disk on every lookup and were never in the cache. That is wrong, and a
+reader on TikTok caught it. Microsoft's documentation for `ipconfig /displaydns` states that the
+resolver cache includes entries preloaded from the local Hosts file alongside records obtained from
+queries. The flush genuinely empties the cache. The DNS Client service then immediately reloads the
+hosts file back into it, which is why the entry is visible again a moment later. It reappears
+because it was put back, not because it bypassed the cache.
+
+The practical conclusion is unchanged, and the corrected mechanism explains it better: a machine
+with a bad hosts file entry will not be fixed by flushing DNS, because the flush reloads the bad
+entry from disk every single time. Knowing that is the difference between a five-minute fix and an
+hour of guessing.
 
 ![The client resolving to the current address after the cache is cleared](docs/images/ext-dns-10-flushed-and-resolved.png)
 
